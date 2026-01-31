@@ -1,0 +1,291 @@
+import javax.swing.*;
+import java.awt.*;
+import java.sql.*;
+import java.util.Random;
+
+public class BusReservationSystem extends JFrame {
+
+    //  Database Connection 
+    private static final String URL = "jdbc:mysql://localhost:3306/bus_reservation";
+    private static final String USER = "root"; // change if needed
+    private static final String PASS = "Vichu@2006"; // your MySQL password
+
+    public static Connection getConnection() throws SQLException {
+        return DriverManager.getConnection(URL, USER, PASS);
+    }
+
+    // GUI Constructor
+    public BusReservationSystem() {
+        setTitle("Bus Reservation System");
+        setSize(600, 500);
+        setDefaultCloseOperation(EXIT_ON_CLOSE);
+        setLayout(new GridLayout(6, 1, 10, 10));
+
+        JButton searchBtn = new JButton("Search Buses");
+        JButton bookBtn = new JButton("Book Ticket");
+        JButton cancelBtn = new JButton("Cancel Ticket");
+        JButton listBusesBtn = new JButton("List All Buses");
+        JButton listTicketsBtn = new JButton("List All Tickets");
+        JButton exitBtn = new JButton("Exit");
+
+        add(searchBtn);
+        add(bookBtn);
+        add(cancelBtn);
+        add(listBusesBtn);
+        add(listTicketsBtn);
+        add(exitBtn);
+
+        // Button actions
+        searchBtn.addActionListener(e -> searchBuses());
+        bookBtn.addActionListener(e -> selectSeatAndBook());
+        cancelBtn.addActionListener(e -> cancelTicket());
+        listBusesBtn.addActionListener(e -> listAllBuses());
+        listTicketsBtn.addActionListener(e -> listAllTickets());
+        exitBtn.addActionListener(e -> System.exit(0));
+
+        setLocationRelativeTo(null);
+        setVisible(true);
+    }
+
+    //  Ensure Tables Exist 
+    public static void createTablesIfNotExist() {
+        try (Connection con = DriverManager.getConnection("jdbc:mysql://localhost:3306/", USER, PASS);
+             Statement st = con.createStatement()) {
+
+            st.executeUpdate("CREATE DATABASE IF NOT EXISTS bus_reservation");
+            st.executeUpdate("USE bus_reservation");
+
+            st.executeUpdate("CREATE TABLE IF NOT EXISTS buses (" +
+                    "bus_number VARCHAR(20) PRIMARY KEY," +
+                    "source VARCHAR(50) NOT NULL," +
+                    "destination VARCHAR(50) NOT NULL," +
+                    "total_seats INT NOT NULL" +
+                    ")");
+
+            st.executeUpdate("CREATE TABLE IF NOT EXISTS passengers (" +
+                    "id VARCHAR(20) PRIMARY KEY," +
+                    "name VARCHAR(50) NOT NULL," +
+                    "contact VARCHAR(20) NOT NULL" +
+                    ")");
+
+            st.executeUpdate("CREATE TABLE IF NOT EXISTS tickets (" +
+                    "ticket_id VARCHAR(4) PRIMARY KEY," +
+                    "bus_number VARCHAR(20) NOT NULL," +
+                    "seat_number INT NOT NULL," +
+                    "passenger_id VARCHAR(20) NOT NULL," +
+                    "booking_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                    "FOREIGN KEY (bus_number) REFERENCES buses(bus_number)," +
+                    "FOREIGN KEY (passenger_id) REFERENCES passengers(id)" +
+                    ")");
+
+            // Sample buses
+            ResultSet rs = st.executeQuery("SELECT COUNT(*) FROM buses");
+            rs.next();
+            if (rs.getInt(1) == 0) {
+                st.executeUpdate("INSERT INTO buses VALUES " +
+                        "('B101', 'Kannur', 'Kozhikode', 40)," +
+                        "('B102', 'Kannur', 'Ernakulam', 45)," +
+                        "('B103', 'Kochi', 'Trivandrum', 50)");
+            }
+
+        } catch (SQLException ex) {
+            ex.printStackTrace();
+            JOptionPane.showMessageDialog(null, "Error creating tables: " + ex.getMessage());
+        }
+    }
+
+    //  Search Buses 
+    private void searchBuses() {
+        String src = JOptionPane.showInputDialog(this, "Enter Source:");
+        String dest = JOptionPane.showInputDialog(this, "Enter Destination:");
+        if (src == null || dest == null) return;
+
+        try (Connection con = getConnection();
+             PreparedStatement ps = con.prepareStatement("SELECT * FROM buses WHERE source=? AND destination=?")) {
+            ps.setString(1, src);
+            ps.setString(2, dest);
+            ResultSet rs = ps.executeQuery();
+
+            StringBuilder sb = new StringBuilder();
+            while (rs.next()) {
+                sb.append("Bus: ").append(rs.getString("bus_number"))
+                        .append(" | From ").append(rs.getString("source"))
+                        .append(" To ").append(rs.getString("destination"))
+                        .append(" | Seats: ").append(rs.getInt("total_seats"))
+                        .append("\n");
+            }
+
+            JOptionPane.showMessageDialog(this, sb.length() > 0 ? sb.toString() : "No buses found.");
+
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Error: " + ex.getMessage());
+            ex.printStackTrace();
+        }
+    }
+
+    // Select Seat Grid and Book 
+    private void selectSeatAndBook() {
+        String busNo = JOptionPane.showInputDialog(this, "Enter Bus Number:");
+        if (busNo == null) return;
+
+        try (Connection con = getConnection()) {
+            // Get bus total seats
+            PreparedStatement psBus = con.prepareStatement("SELECT total_seats FROM buses WHERE bus_number=?");
+            psBus.setString(1, busNo);
+            ResultSet rsBus = psBus.executeQuery();
+            if (!rsBus.next()) {
+                JOptionPane.showMessageDialog(this, "Bus not found.");
+                return;
+            }
+            int totalSeats = rsBus.getInt("total_seats");
+
+            // Get booked seats
+            PreparedStatement psSeats = con.prepareStatement("SELECT seat_number FROM tickets WHERE bus_number=?");
+            psSeats.setString(1, busNo);
+            ResultSet rsSeats = psSeats.executeQuery();
+            boolean[] booked = new boolean[totalSeats + 1];
+            while (rsSeats.next()) {
+                booked[rsSeats.getInt("seat_number")] = true;
+            }
+
+            // Create seat selection panel
+            JPanel panel = new JPanel(new GridLayout((totalSeats + 3) / 4, 4, 5, 5));
+            JButton[] seatButtons = new JButton[totalSeats + 1];
+            final int[] selectedSeat = {0};
+
+            for (int i = 1; i <= totalSeats; i++) {
+                JButton btn = new JButton(String.valueOf(i));
+                btn.setBackground(booked[i] ? Color.RED : Color.GREEN);
+                final int seatNum = i;
+                btn.addActionListener(e -> {
+                    if (!booked[seatNum]) {
+                        selectedSeat[0] = seatNum;
+                        JOptionPane.showMessageDialog(this, "Selected Seat: " + seatNum);
+                    }
+                });
+                seatButtons[i] = btn;
+                panel.add(btn);
+            }
+
+            int result = JOptionPane.showConfirmDialog(this, panel, "Select Seat", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+            if (result != JOptionPane.OK_OPTION || selectedSeat[0] == 0) return;
+
+            // Passenger details
+            String name = JOptionPane.showInputDialog(this, "Passenger Name:");
+            String id = JOptionPane.showInputDialog(this, "Passenger ID:");
+            String contact = JOptionPane.showInputDialog(this, "Contact:");
+            if (name == null || id == null || contact == null) return;
+
+            // Insert passenger
+            PreparedStatement ps1 = con.prepareStatement("INSERT IGNORE INTO passengers VALUES (?, ?, ?)");
+            ps1.setString(1, id);
+            ps1.setString(2, name);
+            ps1.setString(3, contact);
+            ps1.executeUpdate();
+
+            // Generate unique 4-digit ticket ID
+            String ticketId;
+            PreparedStatement check;
+            Random rand = new Random();
+            do {
+                int randomId = 1000 + rand.nextInt(9000); // 1000-9999
+                ticketId = String.valueOf(randomId);
+                check = con.prepareStatement("SELECT ticket_id FROM tickets WHERE ticket_id=?");
+                check.setString(1, ticketId);
+            } while (check.executeQuery().next());
+
+            // Insert ticket
+            PreparedStatement ps2 = con.prepareStatement("INSERT INTO tickets VALUES (?, ?, ?, ?, NOW())");
+            ps2.setString(1, ticketId);
+            ps2.setString(2, busNo);
+            ps2.setInt(3, selectedSeat[0]);
+            ps2.setString(4, id);
+            ps2.executeUpdate();
+
+            JOptionPane.showMessageDialog(this, "Ticket booked successfully!\nTicket ID: " + ticketId);
+
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Error: " + ex.getMessage());
+            ex.printStackTrace();
+        }
+    }
+
+    //  Cancel Ticket 
+    private void cancelTicket() {
+        String tid = JOptionPane.showInputDialog(this, "Enter Ticket ID:");
+        if (tid == null) return;
+
+        try (Connection con = getConnection();
+             PreparedStatement ps = con.prepareStatement("DELETE FROM tickets WHERE ticket_id=?")) {
+            ps.setString(1, tid);
+            int rows = ps.executeUpdate();
+            JOptionPane.showMessageDialog(this, rows > 0 ? "Ticket cancelled successfully." : "Ticket not found.");
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Error: " + ex.getMessage());
+            ex.printStackTrace();
+        }
+    }
+
+    //  List All Buses 
+    private void listAllBuses() {
+        try (Connection con = getConnection();
+             Statement st = con.createStatement();
+             ResultSet rs = st.executeQuery("SELECT * FROM buses")) {
+            StringBuilder sb = new StringBuilder();
+            while (rs.next()) {
+                sb.append("Bus ").append(rs.getString("bus_number"))
+                        .append(": ").append(rs.getString("source"))
+                        .append(" -> ").append(rs.getString("destination"))
+                        .append(" | Seats: ").append(rs.getInt("total_seats"))
+                        .append("\n");
+            }
+            JOptionPane.showMessageDialog(this, sb.length() > 0 ? sb.toString() : "No buses available.");
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Error: " + ex.getMessage());
+            ex.printStackTrace();
+        }
+    }
+
+    // List All Tickets 
+    private void listAllTickets() {
+        try (Connection con = getConnection();
+             Statement st = con.createStatement();
+             ResultSet rs = st.executeQuery(
+                     "SELECT t.ticket_id, b.bus_number, b.source, b.destination, " +
+                             "p.name, p.contact, t.seat_number, t.booking_time " +
+                             "FROM tickets t " +
+                             "JOIN buses b ON t.bus_number=b.bus_number " +
+                             "JOIN passengers p ON t.passenger_id=p.id")) {
+
+            StringBuilder sb = new StringBuilder();
+            while (rs.next()) {
+                sb.append("Ticket ID: ").append(rs.getString("ticket_id")).append("\n")
+                        .append("Bus: ").append(rs.getString("bus_number"))
+                        .append(" (").append(rs.getString("source"))
+                        .append(" -> ").append(rs.getString("destination")).append(")\n")
+                        .append("Passenger: ").append(rs.getString("name"))
+                        .append(" | Seat: ").append(rs.getInt("seat_number")).append("\n")
+                        .append("Contact: ").append(rs.getString("contact")).append("\n")
+                        .append("Booked: ").append(rs.getTimestamp("booking_time")).append("\n\n");
+            }
+
+            JOptionPane.showMessageDialog(this, sb.length() > 0 ? sb.toString() : "No tickets booked yet.");
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Error: " + ex.getMessage());
+            ex.printStackTrace();
+        }
+    }
+
+    //  Main 
+    public static void main(String[] args) {
+        try {
+            Class.forName("com.mysql.cj.jdbc.Driver");
+            createTablesIfNotExist();
+        } catch (Exception e) {
+            JOptionPane.showMessageDialog(null, "MySQL JDBC Driver not found or error creating tables.");
+            return;
+        }
+
+        SwingUtilities.invokeLater(BusReservationSystem::new);
+    }
+}
